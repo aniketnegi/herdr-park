@@ -1,0 +1,34 @@
+id = "herdr-park"
+name = "herdr-park"
+version = "0.1.0"
+min_herdr_version = "0.9.5"
+platforms = ["linux"]
+description = "Park agents you are not using and reopen later."
+
+[[actions]]
+id = "park"
+title = "park: park focused agent"
+contexts = ["pane", "workspace"]
+command = ["bin/herdr-park", "action-park"]
+
+[[actions]]
+id = "list"
+title = "park: list parked agents"
+contexts = ["pane", "workspace", "global"]
+command = ["bin/herdr-park", "action-list"]
+
+[[panes]]
+id = "park"
+title = "park · ctrl-c cancels"
+placement = "popup"
+width = "69%"
+height = 3
+command = ["bin/herdr-park", "park"]
+
+[[panes]]
+id = "list"
+title = "parked"
+placement = "popup"
+width = "69%"
+height = "50%"
+command = ["bin/herdr-park", "list"]

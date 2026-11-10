@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+# herdr-park: park an agent pane
+
+set -euo pipefail
+
+h() { "${HERDR_BIN_PATH:-herdr}" "$@"; }
+die() {
+  read -rsn1 -p "$* (any key)"
+  exit 1
+}
+ctx() { printf '%s' "${HERDR_PLUGIN_CONTEXT_JSON:-}" | jq -r ".$1 // empty"; }
+field() { jq -r ".$2" <<<"$1"; }
+
+db="${HERDR_PLUGIN_STATE_DIR:?run via herdr plugin actions}/parked.jsonl"
+mkdir -p "${db%/*}" && touch "$db"
+session="${HERDR_SESSION:-$(basename "$(dirname "${HERDR_SOCKET_PATH:-/default/x}")")}"
+
+# How to resume each agent kind; the session value herdr reports is appended.
+declare -A resume=([pi]="pi --session" [claude]="claude --resume")
+
+overlay() { # open one of our panes; placement and size come from herdr-plugin.toml
+  h plugin pane open --plugin herdr-park --entrypoint "$1" --focus "${@:2}" >/dev/null
+}
+
+park() {
+  local pane=${PARK_PANE:?} a kind path status note tab
+  a=$(h agent list | jq -c --arg p "$pane" '.result.agents[] | select(.pane_id == $p)')
+  [[ -n $a ]] || die "focused pane has no agent"
+  kind=$(field "$a" agent)
+  [[ -n ${resume[$kind]:-} ]] || die "no resume command known for '$kind' (add it to resume=)"
+  path=$(field "$a" 'agent_session.value // empty')
+  [[ -n $path ]] || die "agent has no saved session yet"
+
+  status=$(field "$a" agent_status)
+  if [[ $status == working || $status == blocked ]]; then
+    read -rn1 -p "agent is $status, park anyway? [y/N] " ok
+    echo
+    [[ $ok == [yY] ]] || exit 0
+  fi
+
+  # prefill: the note from the last time this chat was parked, else pi's session name
+  # (pi's title is "π - <session name> - <folder>")
+  note=$(jq -r --arg p "$path" 'select(.path == $p) | .note' "$db" | tail -1)
+  [[ -n $note ]] || note=$(jq -r '(.foreground_cwd | split("/") | last) as $d |
+        .terminal_title_stripped | ltrimstr("π - ") | rtrimstr(" - " + $d)' <<<"$a")
+  read -er -p 'note: ' -i "$note" note
+  [[ -n $note ]] || exit 0
+
+  local ws=$(field "$a" workspace_id)
+  # unnamed tabs report their number as label; only keep real names
+  tab=$(h tab get "$(field "$a" tab_id)" | jq -r '.result.tab | select(.label != (.number|tostring)) | .label')
+  drop "$path" # replaces the record kept from an earlier park of this chat
+  jq -nc --arg note "$note" --arg session "$session" --arg agent "$kind" --arg path "$path" \
+    --arg cwd "$(field "$a" foreground_cwd)" --arg workspace_id "$ws" --arg tab "$tab" \
+    --arg workspace "$(h workspace get "$ws" | jq -r .result.workspace.label)" \
+    '{note:$note, session:$session, agent:$agent, workspace:$workspace, workspace_id:$workspace_id,
+      tab:$tab, cwd:$cwd, path:$path, parked_at:now|floor}' >>"$db"
+  h pane close "$pane" >/dev/null
+}
+
+reopen() { # $2 = --focus or --no-focus
+  local i=$1 focus=$2 ws pane r tab
+  # deleted folder: fail loudly and keep the item listed (missing chats are handled by locate)
+  [[ -d $(field "$i" cwd) ]] || die "folder missing: $(field "$i" cwd)"
+  ws=$(h workspace list | jq -r --arg id "$(field "$i" workspace_id)" --arg l "$(field "$i" workspace)" \
+    '.result.workspaces | (map(select(.workspace_id == $id)) + map(select(.label == $l)))[0].workspace_id // empty')
+  if [[ -n $ws ]]; then
+    [[ $focus == --no-focus ]] || h workspace focus "$ws" >/dev/null
+    r=$(h tab create --workspace "$ws" --cwd "$(field "$i" cwd)" "$focus")
+  else
+    r=$(h workspace create --cwd "$(field "$i" cwd)" --label "$(field "$i" workspace)" "$focus")
+  fi
+  pane=$(jq -r .result.root_pane.pane_id <<<"$r")
+  tab=$(field "$i" 'tab // empty')
+  [[ -z $tab ]] || h tab rename "$(jq -r .result.tab.tab_id <<<"$r")" "$tab" >/dev/null
+  h pane run "$pane" "${resume[$(field "$i" 'agent // "pi"')]} $(printf %q "$(field "$i" path)")" >/dev/null
+}
+
+list() {
+  local out key path item
+  # only this herdr session's items, grouped by workspace, newest first within each
+  out=$(jq -sr --arg s "$session" 'map(select(.session == $s and (.open | not))) | sort_by(.workspace, -.parked_at)[] |
+        [.path, .workspace, .note, (if (.tab // "") == "" then "" else "[\(.tab)]" end),
+         (.parked_at | strflocaltime("%b %d"))] | @tsv' "$db" | column -t -s $'\t' -o '  ' |
+    fzf --no-sort --with-nth 2.. --expect ctrl-d,alt-enter \
+      --header 'enter: reopen   alt-enter: background   ctrl-d: drop   esc: close') || exit 0
+  key=$(sed -n 1p <<<"$out")
+  path=$(sed -n 2p <<<"$out" | awk '{print $1}')
+  [[ -n $path ]] || exit 0
+  item=$(jq -c --arg p "$path" 'select(.path == $p)' "$db" | head -1)
+  [[ $key == ctrl-d ]] && {
+    drop "$path"
+    exit 0
+  }
+  item=$(locate "$item") || exit 0
+  path=$(field "$item" path)
+  reopen "$item" "$([[ $key == alt-enter ]] && echo --no-focus || echo --focus)" && mark_open "$path"
+}
+
+# Print the item with a chat path that exists. If the chat file moved, offer to search
+# pi's sessions for its id (the uuid ending the file name) and save the new path + folder.
+locate() {
+  local i=$1 old new ok
+  old=$(field "$i" path)
+  [[ -f $old ]] && {
+    printf '%s' "$i"
+    return
+  }
+  read -rn1 -p "chat missing: ${old##*/}, search for it? [y/N] " ok
+  echo >&2
+  [[ $ok == [yY] ]] || return 1
+  # TODO: default pi session dir only; custom sessionDir setting not supported
+  new=$(compgen -G "$HOME/.pi/agent/sessions/*/*_$(basename "${old##*_}" .jsonl).jsonl" | head -1) || true
+  [[ -n $new ]] || die "not found anywhere, kept in list"
+  i=$(jq -c --arg f "$new" --arg c "$(head -1 "$new" | jq -r .cwd)" '.path = $f | .cwd = $c' <<<"$i")
+  jq -c --arg o "$old" --argjson n "$i" 'if .path == $o then $n end' "$db" >"$db.tmp" && mv "$db.tmp" "$db"
+  printf '%s' "$i"
+}
+
+# reopened items stay in the file (hidden from the list) so a re-park can suggest their note
+# TODO: never pruned; a few hundred bytes per chat, add cleanup if the file ever matters
+mark_open() { jq -c --arg p "$1" 'if .path == $p then .open = true end' "$db" >"$db.tmp" && mv "$db.tmp" "$db"; }
+drop() { jq -c --arg p "$1" 'select(.path != $p)' "$db" >"$db.tmp" && mv "$db.tmp" "$db"; }
+
+case ${1:-} in
+action-park) overlay park --env "PARK_PANE=$(ctx focused_pane_id)" ;;
+action-list) overlay list ;;
+park) park ;;
+list) list ;;
+*)
+  echo "usage: herdr-park {action-park|action-list|park|list}" >&2
+  exit 2
+  ;;
+esac
