@@ -14,9 +14,10 @@ same conversation.
 *How it looks* as text cause i don't have the video editing budget xD.
 
 ```
-api        fix flaky auth tests                    [tests]    Nov 10
-api        rate limiter design                                Nov 09
-dotfiles   migrate zsh config                      [shell]    Nov 07
+WORKSPACE  NOTE                  TAB      PARKED
+api        fix flaky auth tests  [tests]  Nov 10
+api        rate limiter design            Nov 09
+dotfiles   migrate zsh config    [shell]  Nov 07
 ```
 
 Reopening goes to the original workspace (recreated if it was closed), opens a new tab

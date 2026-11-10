@@ -79,10 +79,12 @@ reopen() { # $2 = --focus or --no-focus
 list() {
   local out key path item
   # only this herdr session's items, grouped by workspace, newest first within each
-  out=$(jq -sr --arg s "$session" 'map(select(.session == $s and (.open | not))) | sort_by(.workspace, -.parked_at)[] |
+  # first row is the column names (fzf --header-lines 1); the hidden first column is the chat path
+  out=$(jq -sr --arg s "$session" '(["-", "WORKSPACE", "NOTE", "TAB", "PARKED"] | @tsv),
+        (map(select(.session == $s and (.open | not))) | sort_by(.workspace, -.parked_at)[] |
         [.path, .workspace, .note, (if (.tab // "") == "" then "" else "[\(.tab)]" end),
-         (.parked_at | strflocaltime("%b %d"))] | @tsv' "$db" | column -t -s $'\t' -o '  ' |
-    fzf --no-sort --with-nth 2.. --expect ctrl-d,alt-enter \
+         (.parked_at | strflocaltime("%b %d"))] | @tsv)' "$db" | column -t -s $'\t' -o '  ' |
+    fzf --no-sort --layout reverse --header-lines 1 --with-nth 2.. --expect ctrl-d,alt-enter \
       --header 'enter: reopen   alt-enter: background   ctrl-d: drop   esc: close') || exit 0
   key=$(sed -n 1p <<<"$out")
   path=$(sed -n 2p <<<"$out" | awk '{print $1}')
