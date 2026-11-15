@@ -52,9 +52,10 @@ park() {
   drop "$path" # replaces the record kept from an earlier park of this chat
   jq -nc --arg note "$note" --arg session "$session" --arg agent "$kind" --arg path "$path" \
     --arg cwd "$(field "$a" foreground_cwd)" --arg workspace_id "$ws" --arg tab "$tab" \
+    --arg session_kind "$(field "$a" agent_session.kind)" \
     --arg workspace "$(h workspace get "$ws" | jq -r .result.workspace.label)" \
     '{note:$note, session:$session, agent:$agent, workspace:$workspace, workspace_id:$workspace_id,
-      tab:$tab, cwd:$cwd, path:$path, parked_at:now|floor}' >>"$db"
+      tab:$tab, cwd:$cwd, path:$path, session_kind:$session_kind, parked_at:now|floor}' >>"$db"
   h pane close "$pane" >/dev/null
 }
 
@@ -99,12 +100,14 @@ list() {
   reopen "$item" "$([[ $key == alt-enter ]] && echo --no-focus || echo --focus)" && mark_open "$path"
 }
 
-# Print the item with a chat path that exists. If the chat file moved, offer to search
+# Print the item with a chat path that exists (ids pass through). If the chat file moved, offer to search
 # pi's sessions for its id (the uuid ending the file name) and save the new path + folder.
 locate() {
   local i=$1 old new ok
   old=$(field "$i" path)
-  [[ -f $old ]] && {
+  # herdr reports pi sessions as a file path and claude sessions as an id;
+  # only paths can be checked and searched (records without session_kind are not checked)
+  [[ $(field "$i" 'session_kind // ""') != path || -f $old ]] && {
     printf '%s' "$i"
     return
   }
