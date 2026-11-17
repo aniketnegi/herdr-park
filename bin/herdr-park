@@ -16,7 +16,7 @@ mkdir -p "${db%/*}" && touch "$db"
 session="${HERDR_SESSION:-$(basename "$(dirname "${HERDR_SOCKET_PATH:-/default/x}")")}"
 
 # How to resume each agent kind; the session value herdr reports is appended.
-declare -A resume=([pi]="pi --session" [claude]="claude --resume")
+declare -A resume=([pi]="pi --session" [claude]="claude --resume" [agy]="agy --conversation")
 
 overlay() { # open one of our panes; placement and size come from herdr-plugin.toml
   h plugin pane open --plugin herdr-park --entrypoint "$1" --focus "${@:2}" >/dev/null

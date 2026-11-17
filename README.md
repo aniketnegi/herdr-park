@@ -30,7 +30,9 @@ with the original tab name, and resumes the conversation there.
 - herdr's integration for each agent you park, so herdr knows the agent's session:
   `herdr integration status`, then e.g. `herdr integration install claude`
 
-Supported agents: pi (`pi --session`) and Claude Code (`claude --resume`). 
+Supported agents: pi (`pi --session`), Claude Code (`claude --resume`) and
+Antigravity CLI (`agy --conversation`; its integration is `antigravity-cli`, and it
+reports the conversation only after the first prompt is sent).
 
 ## Install
 
