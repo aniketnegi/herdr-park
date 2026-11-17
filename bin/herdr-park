@@ -38,11 +38,12 @@ park() {
     [[ $ok == [yY] ]] || exit 0
   fi
 
-  # prefill: the note from the last time this chat was parked, else pi's session name
+  # prefill: the note from the last time this chat was parked, else the session title
+  # (agents without a title, like agy, get the folder name)
   # (pi's title is "π - <session name> - <folder>")
   note=$(jq -r --arg p "$path" 'select(.path == $p) | .note' "$db" | tail -1)
   [[ -n $note ]] || note=$(jq -r '(.foreground_cwd | split("/") | last) as $d |
-        .terminal_title_stripped | ltrimstr("π - ") | rtrimstr(" - " + $d)' <<<"$a")
+        (.terminal_title_stripped // $d) | ltrimstr("π - ") | rtrimstr(" - " + $d)' <<<"$a")
   read -er -p 'note: ' -i "$note" note
   [[ -n $note ]] || exit 0
 
